@@ -1,0 +1,21 @@
+#!/bin/sh
+# Space Bench: a simulated GPIO controller with the Pi header's lines (GPIO0–GPIO27), labelled
+# like the Pi 5's RP1 so Pi software finds it. Space Bench drives its inputs and reads its
+# outputs through /sys/devices/platform/gpio-sim.*/gpiochip*/sim_gpio*/.
+set -e
+modprobe gpio-sim
+C=/sys/kernel/config/gpio-sim/pi
+[ -d "$C" ] && exit 0
+mkdir -p "$C/bank0"
+echo 28 > "$C/bank0/num_lines"
+echo "${SB_GPIO_LABEL:-pinctrl-rp1}" > "$C/bank0/label"
+i=0
+while [ $i -lt 28 ]; do
+  mkdir -p "$C/bank0/line$i"
+  echo "GPIO$i" > "$C/bank0/line$i/name"
+  i=$((i + 1))
+done
+echo 1 > "$C/live"
+# Pi OS lets the gpio group use the GPIO chips
+chgrp gpio /dev/gpiochip* 2>/dev/null || true
+chmod g+rw /dev/gpiochip* 2>/dev/null || true

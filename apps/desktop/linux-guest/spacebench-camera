@@ -1,0 +1,205 @@
+#!/usr/bin/env python3
+"""Space Bench: the Raspberry Pi Camera Module part, as a V4L2 webcam (/dev/video0).
+
+A v4l2loopback device (the camera add-on: v4l2loopback-dkms) fed with a generated test scene,
+640×480 YUYV at 15 fps, so OpenCV (cv2.VideoCapture(0)), fswebcam, v4l2-ctl and ffmpeg capture
+it. The scene follows the part's controls: the agent writes them to /run/spacebench/camera.json
+  {"scene": 0 colour bars + clock | 1 a red ball bouncing | 2 a big clock, "brightness": 0–100}
+and this re-reads the file when it changes. Run by the agent (as root); its pid is in
+/run/spacebench/camera.pid. Pure Python (no numpy): every frame is assembled from byte rows.
+"""
+import fcntl, json, math, os, signal, struct, subprocess, sys, time
+
+W, H, FPS = 640, 480, 15
+DEV = "/dev/video0"
+CFG = "/run/spacebench/camera.json"
+PID = "/run/spacebench/camera.pid"
+# (V4L2 card names are at most 31 characters)
+LABEL = "Raspberry Pi Camera Module"
+
+V4L2_BUF_TYPE_VIDEO_OUTPUT = 2
+V4L2_PIX_FMT_YUYV = 0x56595559
+V4L2_FIELD_NONE = 1
+V4L2_COLORSPACE_SMPTE170M = 1
+# _IOWR('V', 5, struct v4l2_format) — 208 bytes on 64-bit (the union holds pointers: 8-aligned)
+VIDIOC_S_FMT = 0xC0D05605
+# _IOWR('V', 22, struct v4l2_streamparm) — 204 bytes
+VIDIOC_S_PARM = 0xC0CC5616
+
+def load_module():
+    """the loopback device as /dev/video0, capture-only to programs once this writes to it"""
+    if os.path.exists(DEV):
+        return
+    r = subprocess.run(["modprobe", "v4l2loopback", "devices=1", "video_nr=0", f"card_label={LABEL}", "exclusive_caps=1", "max_buffers=4"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"the camera add-on isn't installed (v4l2loopback): {r.stderr.strip()}")
+    for _ in range(50):
+        if os.path.exists(DEV):
+            break
+        time.sleep(0.05)
+
+def open_output():
+    fd = os.open(DEV, os.O_RDWR)
+    pix = struct.pack("12I", W, H, V4L2_PIX_FMT_YUYV, V4L2_FIELD_NONE, W * 2, W * H * 2, V4L2_COLORSPACE_SMPTE170M, 0, 0, 0, 0, 0)
+    fmt = struct.pack("I4x", V4L2_BUF_TYPE_VIDEO_OUTPUT) + pix.ljust(200, b"\0")
+    fcntl.ioctl(fd, VIDIOC_S_FMT, bytearray(fmt))
+    # timeperframe 1/FPS: what programs read back as the frame rate
+    parm = struct.pack("I", V4L2_BUF_TYPE_VIDEO_OUTPUT) + struct.pack("6I", 0x1000, 0, 1, FPS, 0, 0).ljust(200, b"\0")
+    try:
+        fcntl.ioctl(fd, VIDIOC_S_PARM, bytearray(parm))
+    except OSError:
+        pass
+    return fd
+
+# ── drawing: rows of YUYV bytes ────────────────────────────────────────────────────────────
+gain = 1.0
+
+def yuv(rgb):
+    r, g, b = (min(255.0, max(0.0, c * gain)) for c in rgb)
+    y = 16 + 0.257 * r + 0.504 * g + 0.098 * b
+    u = 128 - 0.148 * r - 0.291 * g + 0.439 * b
+    v = 128 + 0.439 * r - 0.368 * g - 0.071 * b
+    return bytes(int(round(min(255, max(0, x)))) for x in (y, u, y, v))
+
+def span(rgb, n):
+    """n pixels (even) of one colour"""
+    return yuv(rgb) * (n // 2)
+
+FONT = {  # 5×7, rows top to bottom, bit 4 = left column
+    "0": (14, 17, 19, 21, 25, 17, 14), "1": (4, 12, 4, 4, 4, 4, 14), "2": (14, 17, 1, 2, 4, 8, 31),
+    "3": (31, 2, 4, 2, 1, 17, 14), "4": (2, 6, 10, 18, 31, 2, 2), "5": (31, 16, 30, 1, 1, 17, 14),
+    "6": (6, 8, 16, 30, 17, 17, 14), "7": (31, 1, 2, 4, 8, 8, 8), "8": (14, 17, 17, 14, 17, 17, 14),
+    "9": (14, 17, 17, 15, 1, 2, 12), ":": (0, 12, 12, 0, 12, 12, 0), "-": (0, 0, 0, 31, 0, 0, 0),
+    " ": (0,) * 7, ".": (0, 0, 0, 0, 0, 12, 12),
+}
+
+def text_rows(text, scale, fg, bg, width):
+    """rows (7 × scale of them) with `text` centred on a band of colour bg, `width` pixels wide"""
+    tw = min(width, len(text) * 6 * scale)
+    left = ((width - tw) // 2) & ~1
+    on, off = yuv(fg), yuv(bg)
+    rows = []
+    for r in range(7):
+        px = [0] * (width + 1)
+        x = left
+        for ch in text:
+            bits = FONT.get(ch, FONT[" "])[r]
+            for c in range(5):
+                if bits & (16 >> c):
+                    a = x + c * scale
+                    for k in range(a, min(width, a + scale)):
+                        px[k] = 1
+            x += 6 * scale
+        row = b"".join(on if px[i] or px[i + 1] else off for i in range(0, width, 2))
+        rows.extend([row] * scale)
+    return rows
+
+def clock():
+    return time.strftime("%H:%M:%S")
+
+def bars(t):
+    # 75 % colour bars (SMPTE order), a castellated strip, and the time
+    cols = [(191, 191, 191), (191, 191, 0), (0, 191, 191), (0, 191, 0), (191, 0, 191), (191, 0, 0), (0, 0, 191)]
+    bw = (W // 7) & ~1
+    top = b"".join(span(c, bw) for c in cols)
+    top += span(cols[-1], W - bw * 7)
+    rev = [(0, 0, 191), (19, 19, 19), (191, 0, 191), (19, 19, 19), (0, 191, 191), (19, 19, 19), (191, 191, 191)]
+    mid = b"".join(span(c, bw) for c in rev) + span(rev[-1], W - bw * 7)
+    h1, h2 = H * 2 // 3, H * 3 // 4
+    rows = [top] * h1 + [mid] * (h2 - h1)
+    band = text_rows(clock(), 6, (235, 235, 235), (16, 16, 16), W)
+    pad = H - h2 - len(band)
+    dark = span((16, 16, 16), W)
+    rows += [dark] * (pad // 2) + band + [dark] * (pad - pad // 2)
+    return rows
+
+BALL_R = 44
+
+def ball(t):
+    # a red ball bouncing across a pale wall above a wooden table: something to track by colour
+    wall, table = span((200, 205, 210), W), span((150, 105, 60), W)
+    horizon = H * 3 // 5
+    rows = [wall] * horizon + [table] * (H - horizon)
+    # bounce: x and y triangle waves (different periods), inside the frame
+    def tri(t, period, lo, hi):
+        p = (t / period) % 2.0
+        return lo + (hi - lo) * (p if p < 1 else 2 - p)
+    cx = int(tri(t, 4.0, BALL_R, W - BALL_R)) & ~1
+    cy = int(tri(t, 2.6, BALL_R, H - BALL_R))
+    red, shade = yuv((220, 30, 30)), yuv((150, 15, 15))
+    for y in range(max(0, cy - BALL_R), min(H, cy + BALL_R)):
+        dy = y - cy
+        dx = int(math.sqrt(max(0, BALL_R * BALL_R - dy * dy))) & ~1
+        if dx <= 0:
+            continue
+        x0, x1 = max(0, cx - dx), min(W, cx + dx)
+        bg = rows[y]
+        lower = dy > BALL_R // 2
+        body = (shade if lower else red) * ((x1 - x0) // 2)
+        rows[y] = bg[: x0 * 2] + body + bg[x1 * 2 :]
+    return rows
+
+def big_clock(t):
+    bg = (12, 18, 40)
+    dark = span(bg, W)
+    band = text_rows(clock(), 12, (120, 230, 140), bg, W)
+    date = text_rows(time.strftime("%Y-%m-%d"), 4, (160, 170, 200), bg, W)
+    used = len(band) + 24 + len(date)
+    top = (H - used) // 2
+    rows = [dark] * top + band + [dark] * 24 + date
+    return rows + [dark] * (H - len(rows))
+
+SCENES = [bars, ball, big_clock]
+
+def read_cfg(cfg):
+    try:
+        with open(CFG) as f:
+            cfg.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+def main():
+    global gain
+    os.makedirs(os.path.dirname(PID), exist_ok=True)
+    with open(PID, "w") as f:
+        f.write(str(os.getpid()))
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(0))
+    load_module()
+    fd = open_output()
+    cfg = read_cfg({"scene": 0, "brightness": 50})
+    mtime = 0.0
+    t0 = time.monotonic()
+    n = 0
+    while True:
+        try:
+            m = os.stat(CFG).st_mtime
+        except OSError:
+            m = 0.0
+        if m != mtime:
+            mtime = m
+            read_cfg(cfg)
+        gain = max(0.0, min(100.0, float(cfg.get("brightness", 50)))) / 50.0
+        scene = SCENES[int(cfg.get("scene", 0)) % len(SCENES)]
+        t = time.monotonic() - t0
+        rows = scene(t)
+        frame = b"".join(rows)
+        if len(frame) != W * H * 2:
+            frame = frame[: W * H * 2].ljust(W * H * 2, b"\x10\x80")
+        try:
+            os.write(fd, frame)
+        except OSError:
+            # nobody has the format yet (a reader reset it): set it again
+            time.sleep(0.2)
+            os.close(fd)
+            fd = open_output()
+        n += 1
+        left = t0 + n / FPS - time.monotonic()
+        if left > 0:
+            time.sleep(left)
+        elif left < -1:
+            # the VM was paused (a co-simulation frame): don't race to catch up
+            t0 = time.monotonic() - n / FPS
+
+if __name__ == "__main__":
+    main()

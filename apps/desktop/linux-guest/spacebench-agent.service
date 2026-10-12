@@ -1,0 +1,16 @@
+[Unit]
+Description=Space Bench agent (GPIO bridge, program runner)
+After=spacebench-gpio.service dev-virtio\x2dports-spacebench.device
+Requires=spacebench-gpio.service
+BindsTo=dev-virtio\x2dports-spacebench.device
+
+[Service]
+ExecStart=/usr/local/sbin/spacebench-agent
+Restart=always
+RestartSec=1
+# programs run as the pi user's environment would
+Environment=HOME=/home/pi
+WorkingDirectory=/home/pi
+
+[Install]
+WantedBy=multi-user.target

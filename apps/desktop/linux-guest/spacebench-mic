@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Space Bench: a microphone part (the ReSpeaker Lite's USB audio) as an ALSA capture device.
+
+snd-aloop's loopback card is renamed "ReSpeaker"; this plays generated sound into its device 1,
+so programs record it from device 0 — the card's default capture: `arecord -D plughw:ReSpeaker`
+(or plain `arecord`: it is the only sound card), Python sounddevice / PyAudio's default input.
+16 kHz, 2 channels, 16-bit, like the ReSpeaker Lite's USB audio.
+
+The sound follows the part's controls: the agent writes them to /run/spacebench/mic.json
+  {"sound": 0 speech-like voice | 1 a 1 kHz tone | 2 silence, "level": 0–100 (%)}
+Run by the agent (as root); its pid is in /run/spacebench/mic.pid. Needs aplay (alsa-utils).
+"""
+import array, json, math, os, random, signal, subprocess, sys, time
+
+RATE, CH = 16000, 2
+CARD = "ReSpeaker"
+CFG = "/run/spacebench/mic.json"
+PID = "/run/spacebench/mic.pid"
+CHUNK = RATE // 50  # 20 ms
+
+def load_module():
+    if os.path.exists(f"/proc/asound/{CARD}"):
+        return
+    r = subprocess.run(["modprobe", "snd-aloop", f"id={CARD}", "pcm_substreams=1"], capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"no loopback sound driver (snd-aloop): {r.stderr.strip()}")
+    for _ in range(50):
+        if os.path.exists(f"/proc/asound/{CARD}"):
+            break
+        time.sleep(0.05)
+
+class Biquad:
+    """a band-pass resonator (constant 0 dB peak gain)"""
+    def __init__(self, f, q):
+        w = 2 * math.pi * f / RATE
+        a = math.sin(w) / (2 * q)
+        a0 = 1 + a
+        self.b0, self.b2 = a / a0, -a / a0
+        self.a1, self.a2 = -2 * math.cos(w) / a0, (1 - a) / a0
+        self.x1 = self.x2 = self.y1 = self.y2 = 0.0
+    def __call__(self, x):
+        y = self.b0 * x + self.b2 * self.x2 - self.a1 * self.y1 - self.a2 * self.y2
+        self.x2, self.x1, self.y2, self.y1 = self.x1, x, self.y1, y
+        return y
+
+VOWELS = [(730, 1090), (270, 2290), (300, 870), (530, 1840), (570, 840), (660, 1720)]
+
+def speech(seconds=6.0, seed=7):
+    """A voice-like signal: a pitched buzz through moving vowel formants, in syllables and words
+    with pauses between them — what a voice-activity detector or a level meter reacts to."""
+    rnd = random.Random(seed)
+    n = int(seconds * RATE)
+    out = [0.0] * n
+    i = 0
+    phase = 0.0
+    while i < n:
+        # a word: 2–4 syllables, then a pause
+        for _ in range(rnd.randint(2, 4)):
+            dur = int(rnd.uniform(0.16, 0.26) * RATE)
+            f1, f2 = rnd.choice(VOWELS)
+            r1, r2 = Biquad(f1, 6), Biquad(f2, 9)
+            f0 = rnd.uniform(110, 150)
+            for k in range(dur):
+                if i >= n:
+                    break
+                x = k / dur
+                env = math.sin(math.pi * x) ** 0.6
+                pitch = f0 * (1.08 - 0.16 * x)
+                phase += pitch / RATE
+                if phase >= 1:
+                    phase -= 1
+                src = 1 - 2 * phase  # sawtooth: rich in harmonics, like the glottal source
+                noise = rnd.uniform(-1, 1) * (0.5 if x < 0.12 else 0.04)
+                out[i] = env * (r1(src) * 1.6 + r2(src) * 1.0 + noise * 0.3)
+                i += 1
+        i += int(rnd.uniform(0.18, 0.45) * RATE)
+    peak = max(abs(v) for v in out) or 1.0
+    return [v / peak for v in out]
+
+def tone(seconds=1.0, f=1000.0):
+    return [math.sin(2 * math.pi * f * k / RATE) for k in range(int(seconds * RATE))]
+
+def stereo(mono, level):
+    g = 32767 * 0.9 * max(0.0, min(100.0, level)) / 100.0
+    a = array.array("h", bytes(len(mono) * 4))
+    for k, v in enumerate(mono):
+        s = int(v * g)
+        a[2 * k] = s
+        a[2 * k + 1] = s
+    return a.tobytes()
+
+def read_cfg(cfg):
+    try:
+        with open(CFG) as f:
+            cfg.update(json.load(f))
+    except (OSError, ValueError):
+        pass
+    return cfg
+
+def main():
+    os.makedirs(os.path.dirname(PID), exist_ok=True)
+    with open(PID, "w") as f:
+        f.write(str(os.getpid()))
+    player = None
+    def bye(*_):
+        if player:
+            player.kill()
+        sys.exit(0)
+    signal.signal(signal.SIGTERM, bye)
+    load_module()
+    sounds = {0: speech(), 1: tone(), 2: [0.0] * RATE}
+    player = subprocess.Popen(["aplay", "-q", "-D", f"hw:{CARD},1,0", "-t", "raw", "-f", "S16_LE", "-r", str(RATE), "-c", str(CH), "--buffer-time=200000"], stdin=subprocess.PIPE)
+    cfg = read_cfg({"sound": 0, "level": 60})
+    mtime, key, buf, pos = -1.0, None, b"", 0
+    step = CHUNK * CH * 2
+    # keep at most ~100 ms queued (a pipe alone holds a second): a control change is heard at once
+    t0, sent = time.monotonic(), 0
+    while True:
+        ahead = sent / RATE - (time.monotonic() - t0)
+        if ahead > 0.1:
+            time.sleep(ahead - 0.1)
+        elif ahead < -0.5:
+            # the VM was paused (a co-simulation frame), or aplay just started: start counting again
+            t0, sent = time.monotonic(), 0
+        try:
+            m = os.stat(CFG).st_mtime
+        except OSError:
+            m = 0.0
+        if m != mtime:
+            mtime = m
+            read_cfg(cfg)
+        k = (int(cfg.get("sound", 0)) % 3, float(cfg.get("level", 60)))
+        if k != key:
+            key = k
+            buf = stereo(sounds[k[0]], k[1])
+            pos %= len(buf)
+            pos -= pos % 4
+        chunk = buf[pos : pos + step]
+        if len(chunk) < step:
+            chunk += buf[: step - len(chunk)]
+        pos = (pos + step) % len(buf)
+        sent += CHUNK
+        try:
+            player.stdin.write(chunk)
+            player.stdin.flush()
+        except BrokenPipeError:
+            sys.exit("aplay stopped")
+
+if __name__ == "__main__":
+    main()

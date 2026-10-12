@@ -1,0 +1,47 @@
+#!/bin/sh
+# Space Bench: the Raspberry Pi's media add-ons — what the camera and microphone parts need in
+# the guest. Space Bench runs this (as root, through sudo) only after the user agreed.
+#   spacebench-media-setup camera   v4l2loopback (DKMS, built for this kernel) + v4l-utils:
+#                                   the Camera Module part becomes /dev/video0
+#   spacebench-media-setup audio    alsa-utils (aplay / arecord); snd-aloop is in the kernel:
+#                                   a microphone part becomes the "ReSpeaker" sound card
+#   spacebench-media-setup status   camera=yes|no audio=yes|no
+# The loopback modules are loaded by the agent when the part is on the canvas, not at boot.
+set -e
+export DEBIAN_FRONTEND=noninteractive
+KV=$(uname -r)
+has_camera() { modinfo v4l2loopback >/dev/null 2>&1 && command -v v4l2-ctl >/dev/null; }
+has_audio() { modinfo snd-aloop >/dev/null 2>&1 && command -v aplay >/dev/null; }
+yn() { if "$1"; then echo yes; else echo no; fi; }
+
+case "$1" in
+  status)
+    echo "camera=$(yn has_camera) audio=$(yn has_audio)"
+    ;;
+  camera)
+    if has_camera; then echo "The camera add-on is already installed."; exit 0; fi
+    [ -d "/lib/modules/$KV/build" ] || { echo "The Linux headers for $KV are missing (they come with the Raspberry Pi system setup)"; exit 1; }
+    echo "Updating the package lists…"
+    apt-get update -qq
+    echo "Installing v4l2loopback (built for Linux $KV) and v4l-utils…"
+    apt-get install -y -qq --no-install-recommends dkms v4l2loopback-dkms v4l-utils
+    modinfo v4l2loopback >/dev/null 2>&1 || { echo "v4l2loopback didn't build for $KV"; exit 1; }
+    usermod -aG video pi 2>/dev/null || true
+    apt-get clean
+    echo "The camera add-on is installed: a Camera Module part on the canvas is /dev/video0."
+    ;;
+  audio)
+    if has_audio; then usermod -aG audio pi 2>/dev/null || true; echo "The audio add-on is already installed."; exit 0; fi
+    modinfo snd-aloop >/dev/null 2>&1 || { echo "This kernel has no snd-aloop module"; exit 1; }
+    echo "Updating the package lists…"
+    apt-get update -qq
+    echo "Installing alsa-utils…"
+    apt-get install -y -qq --no-install-recommends alsa-utils
+    usermod -aG audio pi 2>/dev/null || true
+    apt-get clean
+    echo "The audio add-on is installed: a microphone part on the canvas is the ReSpeaker sound card."
+    ;;
+  *)
+    echo "usage: spacebench-media-setup camera|audio|status"; exit 2
+    ;;
+esac

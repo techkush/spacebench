@@ -1,0 +1,12 @@
+{
+  "name": "spicebench-app",
+  "private": true,
+  "scripts": {
+    "dev": "pnpm --filter desktop tauri dev",
+    "build": "pnpm --filter desktop tauri build",
+    "test:engine": "cargo test -p sb-engine",
+    "test": "pnpm --filter desktop test",
+    "kicad:symbols": "git clone --depth 1 https://gitlab.com/kicad/libraries/kicad-symbols.git vendor/kicad-symbols 2>/dev/null || git -C vendor/kicad-symbols pull --ff-only; node scripts/build-kicad-symbols.mjs && pnpm --filter desktop kicad:sim-index"
+  },
+  "license": "MIT"
+}

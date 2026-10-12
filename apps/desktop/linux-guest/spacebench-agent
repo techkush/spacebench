@@ -1,0 +1,398 @@
+#!/usr/bin/env python3
+"""Space Bench guest agent: the link between the emulated Raspberry Pi (this VM) and Space Bench.
+
+It talks JSON lines over the virtio-serial port /dev/virtio-ports/spacebench:
+
+  host → guest                                   guest → host
+  {"op":"hello"}                                 {"ev":"hello","board":"pi5","lines":28}
+  {"op":"board","name":"pi4"}                    {"ev":"board","name":"pi4"}
+  {"op":"frame","inputs":{"4":1,"17":0}}         (nothing: inputs applied, frame clock started)
+  {"op":"end"}                                   {"ev":"frame","t":0.0201,"start":[[line,out,pu,pd]…],"events":[[line,t,out,pu,pd]…]}
+  {"op":"step","inputs":{…},"seconds":0.02}      {"ev":"step",…} — a lockstep frame timed by the guest clock
+  {"op":"put","path":p,"data":base64}            {"ev":"put","path":p}
+  {"op":"get","path":p,"offset":o,"length":n}    {"ev":"data","size":total,"data":base64}
+  {"op":"run","cmd":"python3 main.py","cwd":d}   {"ev":"out","text":…}… {"ev":"exit","code":n}
+  {"op":"stdin","text":…} / {"op":"kill"}
+  {"op":"sync"}                                  {"ev":"sync"} — everything written is on the disk
+  {"op":"media"}                                 {"ev":"media","camera":bool,"audio":bool} — add-ons installed?
+  {"op":"devices","camera":cfg|null,"mic":cfg|null}  {"ev":"devices","camera":"on"|"off"|"missing"|why,"mic":…}
+  {"op":"controls","camera":cfg,"mic":cfg}       (nothing: the running feeders follow the new values)
+
+Pins are the simulated controller's lines (gpio-sim, set up by spacebench-gpio-setup): out is
+1/0 when a program drives the line, -1 when it is an input; pu/pd are the bias the program asked
+for (its internal pull-up / pull-down). Inputs are set through the line's simulated pull.
+
+Media parts (the Camera Module, a microphone) are feeders started here when the part is on the
+canvas: spacebench-camera (/dev/video0, v4l2loopback) and spacebench-mic (the "ReSpeaker"
+snd-aloop card). Their controls are JSON files in /run/spacebench; the add-ons they need are
+installed by spacebench-media-setup (the user agrees first).
+"""
+import base64, glob, json, os, pty, select, shutil, signal, subprocess, sys, threading, time
+
+import gpiod
+
+# Space Bench updates the guest's files (and re-executes this agent) when its bundled version differs
+VERSION = "7"
+PORT = "/dev/virtio-ports/spacebench"
+POLL_S = 0.0005  # output lines are sampled at 2 kHz
+
+def sim_dir():
+    for d in glob.glob("/sys/devices/platform/gpio-sim.*/gpiochip*"):
+        return d
+    raise SystemExit("no simulated GPIO controller (spacebench-gpio-setup)")
+
+class Pins:
+    def __init__(self):
+        self.dir = sim_dir()
+        self.chip_path = "/dev/" + os.path.basename(self.dir)
+        self.chip = gpiod.Chip(self.chip_path)
+        self.n = self.chip.get_info().num_lines
+        self.val_fd = [os.open(f"{self.dir}/sim_gpio{i}/value", os.O_RDONLY) for i in range(self.n)]
+        self.lock = threading.Lock()
+        self.cfg = [(-1, False, False)] * self.n   # (driven?, pu, pd) from line info
+        self.state = [(-1, False, False)] * self.n  # (out, pu, pd)
+        self.events = []
+        self.desired = {}
+        self.t0 = time.monotonic()
+        # lockstep frames (step): where the last one ended, events past it, its end state
+        self.frame_end = None
+        self.carry = []
+        self.step_state = None
+        for i in range(self.n):
+            self.chip.watch_line_info(i)
+            self._info(i)
+        for i in range(self.n):
+            self.state[i] = self._read(i)
+
+    def _info(self, i):
+        info = self.chip.get_line_info(i)
+        out = info.used and info.direction == gpiod.line.Direction.OUTPUT
+        self.cfg[i] = (1 if out else -1, info.bias == gpiod.line.Bias.PULL_UP, info.bias == gpiod.line.Bias.PULL_DOWN)
+
+    def _read(self, i):
+        driven, pu, pd = self.cfg[i]
+        if driven < 0:
+            return (-1, pu, pd)
+        return (1 if os.pread(self.val_fd[i], 2, 0)[:1] == b"1" else 0, False, False)
+
+    def _pull(self, i, high):
+        """the level the circuit puts on input line i (through gpio-sim's simulated pull)"""
+        self.desired[i] = high
+        if self.cfg[i][0] < 0:
+            with open(f"{self.dir}/sim_gpio{i}/pull", "w") as f:
+                f.write("pull-up" if high else "pull-down")
+
+    def watch(self):
+        """line requested / released / reconfigured by a program"""
+        while True:
+            ev = self.chip.read_info_event()
+            i = ev.line_info.offset
+            with self.lock:
+                self._info(i)
+                # a program setting the line's bias (Button(pull_up=True)…) resets gpio-sim's
+                # simulated level: put the circuit's level back
+                if self.cfg[i][0] < 0 and i in self.desired:
+                    self._pull(i, self.desired[i])
+                self._sample(i)
+
+    def _sample(self, i):
+        s = self._read(i)
+        if s != self.state[i]:
+            self.state[i] = s
+            self.events.append([i, time.monotonic() - self.t0, *s])
+
+    def poll(self):
+        while True:
+            with self.lock:
+                for i in range(self.n):
+                    if self.cfg[i][0] >= 0:
+                        self._sample(i)
+            time.sleep(POLL_S)
+
+    def frame(self, inputs):
+        with self.lock:
+            for k, high in inputs.items():
+                i = int(k)
+                if 0 <= i < self.n:
+                    self._pull(i, bool(high))
+            self.t0 = time.monotonic()
+            self.events = []
+            self.start = [[i, *self.state[i]] for i in range(self.n)]
+
+    def step(self, inputs, seconds):
+        """A lockstep frame timed by the guest: inputs at the frame's start, events until
+        exactly `seconds` later (guest clock); later events wait for the next frame."""
+        with self.lock:
+            if self.frame_end is None:
+                self.frame_end = time.monotonic()
+                self.carry = []
+            start_t = self.frame_end
+            for k, high in inputs.items():
+                i = int(k)
+                if 0 <= i < self.n:
+                    self._pull(i, bool(high))
+            start = [[i, *self.state[i]] for i in range(self.n)] if not self.step_state else self.step_state
+        end_t = start_t + seconds
+        while True:
+            left = end_t - time.monotonic()
+            if left <= 0:
+                break
+            time.sleep(min(left, 0.002))
+        with self.lock:
+            for i in range(self.n):
+                self._sample(i)
+            # self.events hold absolute times relative to self.t0: rebase to this frame
+            evs = self.carry + [[e[0], self.t0 + e[1], *e[2:]] for e in self.events]
+            self.events = []
+            inside = [[e[0], e[1] - start_t, *e[2:]] for e in evs if e[1] <= end_t]
+            self.carry = [e for e in evs if e[1] > end_t]
+            # the state at the end of the frame: the start state with the frame's events applied
+            st = {p[0]: p[1:] for p in start}
+            for e in inside:
+                st[e[0]] = e[2:]
+            self.step_state = [[i, *st[i]] for i in range(self.n)]
+            self.frame_end = end_t
+            return {"ev": "step", "t": seconds, "start": start, "events": inside}
+
+    def end(self):
+        with self.lock:
+            for i in range(self.n):
+                self._sample(i)
+            out = {"ev": "frame", "t": time.monotonic() - self.t0, "start": getattr(self, "start", []), "events": self.events}
+            self.events = []
+            return out
+
+RUN = "/run/spacebench"
+
+def has_module(name):
+    return subprocess.run(["modinfo", name], capture_output=True).returncode == 0
+
+FEEDERS = {
+    # name: (program, the module it loads, its device, the add-on check)
+    "camera": ("/usr/local/sbin/spacebench-camera", "v4l2loopback", "/dev/video0", lambda: has_module("v4l2loopback") and bool(shutil.which("v4l2-ctl"))),
+    "mic": ("/usr/local/sbin/spacebench-mic", "snd-aloop", "/proc/asound/ReSpeaker", lambda: has_module("snd-aloop") and bool(shutil.which("aplay"))),
+}
+
+def feeder_pid(name):
+    """the running feeder's pid (its pid file, checked against /proc)"""
+    try:
+        pid = int(open(f"{RUN}/{name}.pid").read().strip())
+        if os.path.basename(FEEDERS[name][0]) in open(f"/proc/{pid}/cmdline").read():
+            return pid
+    except (OSError, ValueError):
+        pass
+    return None
+
+def write_cfg(name, cfg):
+    os.makedirs(RUN, exist_ok=True)
+    tmp = f"{RUN}/{name}.json.tmp"
+    with open(tmp, "w") as f:
+        json.dump(cfg, f)
+    os.replace(tmp, f"{RUN}/{name}.json")
+
+def camera_ready():
+    """the camera is a capture device once the feeder has set its format (exclusive_caps)"""
+    try:
+        return "Video Capture" in subprocess.run(["v4l2-ctl", "-d", "/dev/video0", "--info"], capture_output=True, text=True, timeout=2).stdout
+    except Exception:
+        return False
+
+def feeder(name, cfg):
+    """start (cfg) or stop (None) a media feeder: "on", "off", "missing" (the add-on) or why not"""
+    prog, module, dev, installed = FEEDERS[name]
+    pid = feeder_pid(name)
+    if cfg is None:
+        if pid:
+            try:
+                os.kill(pid, signal.SIGTERM)
+                for _ in range(40):
+                    if not os.path.exists(f"/proc/{pid}"):
+                        break
+                    time.sleep(0.05)
+            except OSError:
+                pass
+        # the device goes with the part (a program still holding it keeps it a while)
+        subprocess.run(["modprobe", "-r", module], capture_output=True)
+        return "off"
+    write_cfg(name, cfg)
+    if pid:
+        return "on"
+    if not installed():
+        return "missing"
+    log = open(f"{RUN}/{name}.log", "w")
+    p = subprocess.Popen([sys.executable, prog], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL, start_new_session=True)
+    log.close()
+    for _ in range(100):
+        if p.poll() is not None:
+            try:
+                return "failed: " + open(f"{RUN}/{name}.log").read().strip().splitlines()[-1]
+            except (OSError, IndexError):
+                return f"failed (exit {p.returncode})"
+        if os.path.exists(dev) and (name != "camera" or camera_ready()):
+            return "on"
+        time.sleep(0.05)
+    return "on"
+
+class Agent:
+    def __init__(self):
+        self.fd = os.open(PORT, os.O_RDWR)
+        self.wlock = threading.Lock()
+        self.pins = Pins()
+        self.proc = None
+        self.pty = None
+
+    def send(self, msg):
+        data = (json.dumps(msg, separators=(",", ":")) + "\n").encode()
+        with self.wlock:
+            while data:
+                n = os.write(self.fd, data)
+                data = data[n:]
+
+    def board(self):
+        try:
+            return open("/run/spacebench/board").read().strip()
+        except OSError:
+            return "pi5"
+
+    def run(self, cmd, cwd, reset=True):
+        self.kill()
+        if reset:
+            with self.pins.lock:
+                self.pins.frame_end = None
+                self.pins.carry = []
+                self.pins.step_state = None
+        master, slave = pty.openpty()
+        env = dict(os.environ, PYTHONUNBUFFERED="1", TERM="dumb", HOME="/home/pi", USER="pi", LOGNAME="pi")
+        # the program runs as the pi user, with Raspberry Pi OS's hardware groups
+        as_pi = {}
+        try:
+            import grp, pwd
+            pw = pwd.getpwnam("pi")
+            groups = [g for g in ("gpio", "i2c", "spi", "dialout", "video", "audio") if g in {x.gr_name for x in grp.getgrall()}]
+            as_pi = dict(user=pw.pw_uid, group=pw.pw_gid, extra_groups=groups)
+        except KeyError:
+            pass
+        self.proc = subprocess.Popen(cmd, shell=True, cwd=cwd or None, stdin=slave, stdout=slave, stderr=slave, env=env, start_new_session=True, **as_pi)
+        os.close(slave)
+        self.pty = master
+        proc = self.proc
+        def pump():
+            while True:
+                try:
+                    data = os.read(master, 4096)
+                except OSError:
+                    break
+                if not data:
+                    break
+                self.send({"ev": "out", "text": data.decode(errors="replace")})
+            code = proc.wait()
+            if self.proc is proc:
+                self.proc = None
+            self.send({"ev": "exit", "code": code})
+        threading.Thread(target=pump, daemon=True).start()
+
+    def kill(self):
+        p = self.proc
+        if p and p.poll() is None:
+            try:
+                os.killpg(p.pid, signal.SIGTERM)
+                p.wait(1)
+            except Exception:
+                try: os.killpg(p.pid, signal.SIGKILL)
+                except Exception: pass
+
+    def handle(self, m):
+        op = m.get("op")
+        if op == "hello":
+            self.send({"ev": "hello", "board": self.board(), "lines": self.pins.n, "chip": self.pins.chip_path, "version": VERSION})
+        elif op == "reexec":
+            # Space Bench installed a newer agent: run it
+            self.kill()
+            os.execv(sys.executable, [sys.executable, os.path.abspath(sys.argv[0])])
+        elif op == "board":
+            subprocess.run(["/usr/local/sbin/spacebench-identity", m["name"]], check=False, capture_output=True)
+            self.send({"ev": "board", "name": self.board()})
+        elif op == "frame":
+            self.pins.frame(m.get("inputs", {}))
+        elif op == "end":
+            self.send(self.pins.end())
+        elif op == "step":
+            inputs = m.get("inputs", {})
+            if m.get("run"):
+                # the first frame starts the program — after its inputs are set, so it never
+                # reads a level the circuit doesn't have; the frame clock starts with it
+                self.kill()
+                with self.pins.lock:
+                    self.pins.frame_end = None
+                    self.pins.carry = []
+                    self.pins.step_state = None
+                self.pins.step(inputs, 0)
+                self.run(m["run"], m.get("cwd"), reset=False)
+                inputs = {}
+            self.send(self.pins.step(inputs, float(m.get("seconds", 0.02))))
+        elif op == "put":
+            os.makedirs(os.path.dirname(m["path"]) or ".", exist_ok=True)
+            with open(m["path"], "wb") as f:
+                f.write(base64.b64decode(m["data"]))
+                # on the disk now: QEMU may be ended any moment (a new file would come back empty)
+                f.flush()
+                os.fsync(f.fileno())
+            if m.get("mode"):
+                os.chmod(m["path"], int(m["mode"], 8))
+            self.send({"ev": "put", "path": m["path"]})
+        elif op == "get":
+            # a slice of a guest file (the setup copies the kernel and initrd out this way)
+            with open(m["path"], "rb") as f:
+                f.seek(int(m.get("offset", 0)))
+                data = f.read(int(m.get("length", 1 << 20)))
+            self.send({"ev": "data", "size": os.path.getsize(m["path"]), "data": base64.b64encode(data).decode()})
+        elif op == "run":
+            self.run(m["cmd"], m.get("cwd"))
+        elif op == "stdin":
+            if self.pty is not None:
+                os.write(self.pty, m["text"].encode())
+        elif op == "kill":
+            self.kill()
+        elif op == "sync":
+            os.sync()
+            self.send({"ev": "sync"})
+        elif op == "media":
+            self.send({"ev": "media", "camera": bool(FEEDERS["camera"][3]()), "audio": bool(FEEDERS["mic"][3]())})
+        elif op == "devices":
+            self.send({"ev": "devices", **{k: feeder(k, m.get(k)) for k in FEEDERS}})
+        elif op == "controls":
+            for k in FEEDERS:
+                if isinstance(m.get(k), dict):
+                    write_cfg(k, m[k])
+
+    def serve(self):
+        # Space Bench stops the VM by ending QEMU: write files (pip installs, the program) to the
+        # disk within half a second instead of Linux's 30, so a stop never loses them
+        for k, v in (("dirty_expire_centisecs", "50"), ("dirty_writeback_centisecs", "50")):
+            try:
+                with open(f"/proc/sys/vm/{k}", "w") as f:
+                    f.write(v)
+            except OSError:
+                pass
+        threading.Thread(target=self.pins.watch, daemon=True).start()
+        threading.Thread(target=self.pins.poll, daemon=True).start()
+        self.send({"ev": "ready", "board": self.board(), "lines": self.pins.n})
+        buf = b""
+        while True:
+            select.select([self.fd], [], [])
+            chunk = os.read(self.fd, 65536)
+            if not chunk:
+                time.sleep(0.05)  # host not connected yet
+                continue
+            buf += chunk
+            while b"\n" in buf:
+                line, buf = buf.split(b"\n", 1)
+                if not line.strip():
+                    continue
+                try:
+                    self.handle(json.loads(line))
+                except Exception as e:
+                    self.send({"ev": "error", "message": f"{type(e).__name__}: {e}"})
+
+if __name__ == "__main__":
+    Agent().serve()

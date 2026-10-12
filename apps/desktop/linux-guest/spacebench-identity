@@ -1,0 +1,32 @@
+#!/bin/sh
+# Space Bench: make this VM identify as a Raspberry Pi model, so Pi software (gpiozero, lgpio,
+# RPi.GPIO, raspi-config…) sees the board it expects. The device tree the firmware passed is
+# copied to RAM, its model / compatible / revision are rewritten, and the copy is bind-mounted
+# over /sys/firmware/devicetree/base (/proc/device-tree points there).
+#   spacebench-identity <pi5|pi4|pi3|zero2w>   (default: the spacebench.board credential, else pi5)
+set -e
+board="${1:-}"
+[ -z "$board" ] && [ -n "$CREDENTIALS_DIRECTORY" ] && [ -f "$CREDENTIALS_DIRECTORY/spacebench.board" ] && board=$(cat "$CREDENTIALS_DIRECTORY/spacebench.board")
+board="${board:-pi5}"
+case "$board" in
+  pi5)    model="Raspberry Pi 5 Model B Rev 1.0";            compat="raspberrypi,5-model-b brcm,bcm2712"; rev=c04170 ;;
+  pi4)    model="Raspberry Pi 4 Model B Rev 1.5";            compat="raspberrypi,4-model-b brcm,bcm2711"; rev=c03115 ;;
+  pi3)    model="Raspberry Pi 3 Model B Plus Rev 1.3";       compat="raspberrypi,3-model-b-plus brcm,bcm2837"; rev=a020d3 ;;
+  zero2w) model="Raspberry Pi Zero 2 W Rev 1.0";             compat="raspberrypi,model-zero-2-w brcm,bcm2837"; rev=902120 ;;
+  *) echo "unknown board $board" >&2; exit 1 ;;
+esac
+BASE=/sys/firmware/devicetree/base
+DT=/run/spacebench/dt
+mountpoint -q "$BASE" && umount "$BASE"
+rm -rf "$DT"; mkdir -p "$DT"
+cp -a "$BASE/." "$DT/"
+printf '%s\0' "$model" > "$DT/model"
+: > "$DT/compatible"; for c in $compat linux,dummy-virt; do printf '%s\0' "$c" >> "$DT/compatible"; done
+mkdir -p "$DT/system"
+# big-endian 32-bit cells, written as octal escapes (POSIX printf has no \x)
+be32() { h=$(printf '%08x' "0x$1"); o=""; for i in 0 2 4 6; do o="$o\\$(printf '%03o' "0x$(echo "$h" | cut -c$((i + 1))-$((i + 2)))")"; done; printf "$o"; }
+be32 "$rev" > "$DT/system/linux,revision"
+{ be32 0; be32 5bec0001; } > "$DT/system/linux,serial"
+mount --bind "$DT" "$BASE"
+echo "$board" > /run/spacebench/board
+echo "identity: $model"

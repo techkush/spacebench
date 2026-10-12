@@ -1,0 +1,213 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "shadcn/tailwind.css";
+@import "@fontsource-variable/geist";
+@import "@fontsource-variable/geist-mono";
+@import "uplot/dist/uPlot.min.css";
+
+@custom-variant dark (&:is(.dark *));
+
+/* Theme tokens (light and dark). */
+@theme inline {
+  --font-heading: var(--font-sans);
+  --font-sans: "Geist Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono Variable", ui-monospace, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-info: var(--info);
+  --color-info-subtle: var(--info-subtle);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--foreground);
+  --color-sidebar-border: var(--border);
+  --color-sidebar-accent: var(--accent);
+  --color-sidebar-accent-foreground: var(--accent-foreground);
+  --color-sidebar-primary: var(--primary);
+  --color-sidebar-primary-foreground: var(--primary-foreground);
+  --color-sidebar-ring: var(--ring);
+
+  --color-success-subtle: var(--success-subtle);
+  --color-destructive-subtle: var(--destructive-subtle);
+  --color-warning-subtle: var(--warning-subtle);
+
+  --color-canvas: var(--canvas-background);
+  --color-canvas-grid: var(--canvas-grid);
+  --color-canvas-symbol: var(--canvas-symbol);
+  --color-canvas-wire: var(--canvas-wire);
+  --color-canvas-selection: var(--canvas-selection);
+  --color-volt-high: var(--canvas-volt-high);
+  --color-volt-low: var(--canvas-volt-low);
+  --color-volt-zero: var(--canvas-volt-zero);
+  --color-current: var(--canvas-current);
+  --color-scope: var(--scope-background);
+
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-chart-grid: var(--chart-grid);
+
+  --radius-sm: calc(var(--radius) * 0.6);
+  --radius-md: calc(var(--radius) * 0.8);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) * 1.4);
+  --radius-2xl: calc(var(--radius) * 1.8);
+}
+
+:root {
+  --radius: 0.5rem;
+  --background: #ffffff;
+  --foreground: #09090b;
+  --card: #ffffff;
+  --card-foreground: #09090b;
+  --popover: #ffffff;
+  --popover-foreground: #09090b;
+  --primary: #18181b;
+  --primary-foreground: #fafafa;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f4f4f5;
+  --accent-foreground: #18181b;
+  --destructive: #dc2626;
+  --success: #16a34a;
+  --warning: #d97706;
+  --info: #2563eb;
+  --border: #e4e4e7;
+  --input: #e4e4e7;
+  --ring: #a1a1aa;
+  --sidebar: #fafafa;
+
+  --success-subtle: rgb(22 163 74 / 0.14);
+  --destructive-subtle: rgb(220 38 38 / 0.12);
+  --warning-subtle: rgb(217 119 6 / 0.14);
+  --info-subtle: rgb(37 99 235 / 0.12);
+
+  --canvas-background: #fcfcfd;
+  --canvas-grid: #d4d4d8;
+  --canvas-symbol: #27272a;
+  --canvas-wire: #2563eb;
+  --canvas-selection: #f97316;
+  --canvas-volt-high: #16a34a;
+  --canvas-volt-low: #dc2626;
+  --canvas-volt-zero: #a1a1aa;
+  --canvas-current: #eab308;
+  --canvas-body: #fffbeb;
+  --canvas-pin-text: #71717a;
+  --scope-background: #ffffff;
+
+  --chart-1: #2563eb;
+  --chart-2: #e11d48;
+  --chart-3: #16a34a;
+  --chart-4: #d97706;
+  --chart-5: #7c3aed;
+  --chart-grid: #e4e4e7;
+}
+
+.dark {
+  --background: #09090b;
+  --foreground: #fafafa;
+  --card: #18181b;
+  --card-foreground: #fafafa;
+  --popover: #18181b;
+  --popover-foreground: #fafafa;
+  --primary: #fafafa;
+  --primary-foreground: #18181b;
+  --secondary: #27272a;
+  --secondary-foreground: #fafafa;
+  --muted: #27272a;
+  --muted-foreground: #a1a1aa;
+  --accent: #27272a;
+  --accent-foreground: #fafafa;
+  --destructive: #ef4444;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --info: #60a5fa;
+  --border: #27272a;
+  --input: #3f3f46;
+  --ring: #71717a;
+  --sidebar: #111113;
+
+  --success-subtle: rgb(34 197 94 / 0.16);
+  --destructive-subtle: rgb(239 68 68 / 0.18);
+  --warning-subtle: rgb(245 158 11 / 0.16);
+  --info-subtle: rgb(96 165 250 / 0.16);
+
+  --canvas-background: #0c0c0e;
+  --canvas-grid: #27272a;
+  --canvas-symbol: #d4d4d8;
+  --canvas-wire: #60a5fa;
+  --canvas-selection: #fb923c;
+  --canvas-volt-high: #4ade80;
+  --canvas-volt-low: #f87171;
+  --canvas-volt-zero: #52525b;
+  --canvas-current: #facc15;
+  --canvas-body: #1c1a14;
+  --canvas-pin-text: #a1a1aa;
+  --scope-background: #050506;
+
+  --chart-1: #60a5fa;
+  --chart-2: #fb7185;
+  --chart-3: #4ade80;
+  --chart-4: #fbbf24;
+  --chart-5: #c084fc;
+  --chart-grid: #27272a;
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body,
+  #root {
+    @apply h-full overflow-hidden;
+  }
+  body {
+    @apply bg-background text-foreground font-sans antialiased select-none;
+  }
+}
+
+/* uPlot legend/cursor themed with our tokens */
+.sb-plot .u-legend { @apply font-mono text-xs text-muted-foreground; }
+.sb-plot .u-legend .u-value { @apply text-foreground; }
+.sb-plot .u-select { background: color-mix(in oklab, var(--chart-1) 12%, transparent); }
+.sb-plot .u-cursor-x, .sb-plot .u-cursor-y { border-color: var(--muted-foreground) !important; }
+
+/* KiCad symbol artwork (see scripts/build-kicad-symbols.mjs) */
+.ksym { stroke: currentColor; fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.ksym .kb { fill: var(--canvas-body); }
+.ksym .kp { stroke-width: 1.52px; }
+.ksym text { fill: currentColor; stroke: none; font-family: var(--font-mono, ui-monospace, monospace); }
+.ksym text.kn { fill: var(--canvas-pin-text); }
+
+/* current-flow animation: dots marching along a wire */
+.sb-flow { stroke-dasharray: 0 14; stroke-linecap: round; animation: sb-flow linear infinite; pointer-events: none; }
+@keyframes sb-flow { to { stroke-dashoffset: -28; } }
+@keyframes sb-indeterminate { 0% { transform: translateX(-100%); } 100% { transform: translateX(300%); } }
+/* output devices: speaker sound waves, motor rotor */
+.sb-wave { transform-box: fill-box; transform-origin: left center; animation: sb-wave 0.9s ease-out infinite; pointer-events: none; }
+@keyframes sb-wave { 0% { opacity: 0; transform: scale(0.6); } 30% { opacity: 1; } 100% { opacity: 0; transform: scale(1.25); } }
+.sb-spin { transform-box: view-box; animation: sb-spin linear infinite; pointer-events: none; }
+@keyframes sb-spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .sb-flow, .sb-wave, .sb-spin { animation: none; } }

@@ -1,0 +1,69 @@
+/* The live code view: badges after code lines, a mark in the gutter, a flash when a value changes. */
+.sb-live-high { --live: #16a34a; --live-bg: rgb(22 163 74 / 0.13); }
+.sb-live-low { --live: #64748b; --live-bg: rgb(100 116 139 / 0.12); }
+.sb-live-pwm { --live: #d97706; --live-bg: rgb(217 119 6 / 0.13); }
+.sb-live-analog { --live: #2563eb; --live-bg: rgb(37 99 235 / 0.12); }
+.sb-live-input { --live: #0d9488; --live-bg: rgb(13 148 136 / 0.12); }
+.sb-live-float { --live: #dc2626; --live-bg: rgb(220 38 38 / 0.12); }
+.sb-live-mode { --live: #7c3aed; --live-bg: rgb(124 58 237 / 0.11); }
+.sb-live-serial { --live: #0891b2; --live-bg: rgb(8 145 178 / 0.12); }
+.sb-live-time { --live: #db2777; --live-bg: rgb(219 39 119 / 0.11); }
+.sb-live-sound { --live: #ea580c; --live-bg: rgb(234 88 12 / 0.13); }
+
+.dark .sb-live-high { --live: #4ade80; --live-bg: rgb(74 222 128 / 0.14); }
+.dark .sb-live-low { --live: #94a3b8; --live-bg: rgb(148 163 184 / 0.12); }
+.dark .sb-live-pwm { --live: #fbbf24; --live-bg: rgb(251 191 36 / 0.14); }
+.dark .sb-live-analog { --live: #60a5fa; --live-bg: rgb(96 165 250 / 0.14); }
+.dark .sb-live-input { --live: #2dd4bf; --live-bg: rgb(45 212 191 / 0.13); }
+.dark .sb-live-float { --live: #f87171; --live-bg: rgb(248 113 113 / 0.14); }
+.dark .sb-live-mode { --live: #a78bfa; --live-bg: rgb(167 139 250 / 0.14); }
+.dark .sb-live-serial { --live: #22d3ee; --live-bg: rgb(34 211 238 / 0.13); }
+.dark .sb-live-time { --live: #f472b6; --live-bg: rgb(244 114 182 / 0.13); }
+.dark .sb-live-sound { --live: #fb923c; --live-bg: rgb(251 146 60 / 0.14); }
+
+/* a badge: after the code in the editor, and the chips in the strip */
+.sb-live {
+  color: var(--live);
+  background: var(--live-bg);
+  border: 1px solid color-mix(in srgb, var(--live) 35%, transparent);
+  border-radius: 4px;
+  padding: 0 6px;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: pre;
+}
+.monaco-editor .sb-live { margin-left: 14px; }
+.sb-live-dim { opacity: 0.4; border-style: dashed; }
+.sb-live-fill { position: absolute; inset: 0 auto 0 0; background: var(--live-bg); transition: width 120ms linear; }
+
+/* the gutter mark beside a live line */
+.monaco-editor .sb-live-gutter { width: 3px !important; margin-left: 4px; border-radius: 2px; background: var(--live); }
+.monaco-editor .sb-live-gutter-high { --live: #16a34a; }
+.monaco-editor .sb-live-gutter-low { --live: #94a3b8; }
+.monaco-editor .sb-live-gutter-pwm { --live: #d97706; }
+.monaco-editor .sb-live-gutter-analog { --live: #2563eb; }
+.monaco-editor .sb-live-gutter-input { --live: #0d9488; }
+.monaco-editor .sb-live-gutter-float { --live: #dc2626; }
+.monaco-editor .sb-live-gutter-mode { --live: #7c3aed; }
+.monaco-editor .sb-live-gutter-serial { --live: #0891b2; }
+.monaco-editor .sb-live-gutter-time { --live: #db2777; }
+.monaco-editor .sb-live-gutter-sound { --live: #ea580c; }
+
+/* a value just changed: the line lights up in its colour */
+.monaco-editor .sb-live-flash { background: var(--live-bg); }
+.monaco-editor .sb-live-flash-high { --live-bg: rgb(22 163 74 / 0.16); }
+.monaco-editor .sb-live-flash-low { --live-bg: rgb(100 116 139 / 0.14); }
+.monaco-editor .sb-live-flash-pwm { --live-bg: rgb(217 119 6 / 0.16); }
+.monaco-editor .sb-live-flash-analog { --live-bg: rgb(37 99 235 / 0.14); }
+.monaco-editor .sb-live-flash-input { --live-bg: rgb(13 148 136 / 0.15); }
+.monaco-editor .sb-live-flash-float { --live-bg: rgb(220 38 38 / 0.14); }
+.monaco-editor .sb-live-flash-mode { --live-bg: rgb(124 58 237 / 0.12); }
+.monaco-editor .sb-live-flash-serial { --live-bg: rgb(8 145 178 / 0.15); }
+.monaco-editor .sb-live-flash-time { --live-bg: rgb(219 39 119 / 0.12); }
+.monaco-editor .sb-live-flash-sound { --live-bg: rgb(234 88 12 / 0.15); }
+
+/* the strip above the code */
+.sb-live-strip { background: linear-gradient(90deg, rgb(225 29 72 / 0.06), transparent 40%); }
+.sb-live-pulse { width: 7px; height: 7px; border-radius: 50%; background: #e11d48; box-shadow: 0 0 0 0 rgb(225 29 72 / 0.6); animation: sb-live-pulse 1.4s ease-out infinite; flex-shrink: 0; }
+@keyframes sb-live-pulse { 0% { box-shadow: 0 0 0 0 rgb(225 29 72 / 0.55); } 70% { box-shadow: 0 0 0 6px rgb(225 29 72 / 0); } 100% { box-shadow: 0 0 0 0 rgb(225 29 72 / 0); } }
+@media (prefers-reduced-motion: reduce) { .sb-live-pulse { animation: none; } .sb-live-fill { transition: none; } }

@@ -1,0 +1,12 @@
+[Unit]
+Description=Space Bench simulated GPIO header
+After=sys-kernel-config.mount spacebench-identity.service
+Wants=sys-kernel-config.mount
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/spacebench-gpio-setup
+
+[Install]
+WantedBy=multi-user.target

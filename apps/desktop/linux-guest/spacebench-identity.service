@@ -1,0 +1,15 @@
+[Unit]
+Description=Space Bench Raspberry Pi identity (model, revision)
+DefaultDependencies=no
+After=sysinit.target
+Before=basic.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# the board Space Bench boots this VM as (QEMU: -smbios type=11,value=io.systemd.credential:spacebench.board=pi4)
+ImportCredential=spacebench.board
+ExecStart=/usr/local/sbin/spacebench-identity
+
+[Install]
+WantedBy=basic.target

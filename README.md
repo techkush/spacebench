@@ -3,10 +3,9 @@
 **Design, simulate and build electronics in one free desktop app — schematics, SPICE simulation, a circuit
 language, virtual instruments, PCB layout and microcontrollers running their real firmware.**
 
-<picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/simulate-dark.jpg">
-  <img alt="A 555 LED blinker simulating: the LED glows, wires are coloured by voltage and the oscilloscope shows the trigger and output." src="docs/screenshots/simulate-light.jpg">
-</picture>
+<p align="center">
+  <img alt="Open an example, press Simulate: the 555 blinker runs in real time — the LED blinks, wires are coloured by voltage and the oscilloscope draws the trigger and output." src="docs/media/simulate.gif" width="100%">
+</p>
 
 Draw a schematic with the KiCad symbol library or write it as code in **Kirk**; simulate it on **ngspice**; probe
 it with an oscilloscope, Bode plotter and multimeter; lay out a PCB and export Gerbers — and program Arduino,
@@ -19,26 +18,11 @@ the circuit.
 ---
 
 ## Contents
-- [Screenshots](#screenshots)
 - [Features](#features)
 - [Supported systems](#supported-systems)
 - [Getting started](#getting-started)
 - [Repository layout](#repository-layout)
 - [Licence and credits](#licence-and-credits)
-
----
-
-## Screenshots
-
-Each screenshot follows your GitHub theme (light or dark).
-
-| | |
-|---|---|
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/home-dark.jpg"><img alt="Start screen" src="docs/screenshots/home-light.jpg"></picture> **Start screen** — new project, schematic, code, Arduino sketch, import | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/examples-dark.jpg"><img alt="Examples" src="docs/screenshots/examples-light.jpg"></picture> **Examples** — ready-to-simulate circuits |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/kirk-dark.jpg"><img alt="Kirk code next to the schematic" src="docs/screenshots/kirk-light.jpg"></picture> **Kirk** — the circuit as code, drawn and simulated live | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/bode-dark.jpg"><img alt="Bode plot of an RC filter" src="docs/screenshots/bode-light.jpg"></picture> **AC analysis** — Bode plotter on an RC low-pass |
-| <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/mcu-dark.jpg"><img alt="Arduino Blink running with live pin badges in the code" src="docs/screenshots/mcu-light.jpg"></picture> **Microcontrollers** — real firmware running, live pin states in the code | <picture><source media="(prefers-color-scheme: dark)" srcset="docs/screenshots/pcb-dark.jpg"><img alt="PCB layout, auto-routed" src="docs/screenshots/pcb-light.jpg"></picture> **PCB** — footprints, auto-router, design rules, Gerbers |
-
-<p align="center"><img alt="3D board view" src="docs/screenshots/pcb-3d-dark.jpg" width="70%"><br><b>3D board view</b></p>
 
 ---
 
@@ -67,6 +51,8 @@ Each screenshot follows your GitHub theme (light or dark).
   force, acceleration, gas, motion, touch, liquid level, moisture and current.
 
 ### Kirk — circuits as code
+<p align="center"><img alt="Changing RB from 10k to 47k in the Kirk code: the schematic and the simulation update at once." src="docs/media/kirk.gif" width="100%"><br><sub>Change a value in the code — the schematic and the running simulation follow.</sub></p>
+
 A small language (`.kirk`, after Kirchhoff) that describes a circuit. The schematic draws itself from the code
 and edits to the drawing flow back into the code.
 
@@ -109,6 +95,8 @@ assert  freq in 6.5 Hz .. 7.2 Hz
   **Learn Kirk** tutorial and cheat sheet. Language reference: [`docs/kirk-language-spec.md`](docs/kirk-language-spec.md).
 
 ### Instruments and analysis
+<p align="center"><img alt="An RC low-pass filter: AC sweep, Bode plot, the −3 dB frequency measured and a cursor reading at 1 kHz." src="docs/media/bode.gif" width="100%"><br><sub>AC sweep of an RC low-pass: Bode plot, measured −3 dB point (994.7 Hz) and a cursor at 1 kHz.</sub></p>
+
 - **Oscilloscope**, **Bode plotter**, **multimeter**, **function generator**, **spectrum analyser** (FFT / THD),
   **logic view**, **power table** and **curve tracer** — probe any wire or part.
 - **Analysis view** for result sets, **Runs** history, CSV / JSON / MATLAB export and an HTML report.
@@ -116,11 +104,15 @@ assert  freq in 6.5 Hz .. 7.2 Hz
   every part's voltage, current and power against its ratings.
 
 ### PCB
+<p align="center"><img alt="PCB: the ratsnest, one-click auto-routing until the design-rule check passes, then the 3D board view." src="docs/media/pcb.gif" width="100%"><br><sub>From ratsnest to routed board (design-rule check: 0 errors) and the 3D view.</sub></p>
+
 - Footprints from the schematic, smart placement, ratsnest, an **A\* auto-router**, net classes, design-rule
   checks and a **3D board view**.
 - **Gerber X2 + Excellon** export.
 
 ### Microcontrollers and boards
+<p align="center"><img alt="Opening the Arduino Blink example and running it: the LED blinks, the Serial Monitor prints, and every pin line in the code shows its live state." src="docs/media/microcontrollers.gif" width="100%"><br><sub>Real Arduino firmware running — the live code view shows each pin's state as it changes.</sub></p>
+
 - A Wokwi-style workspace: write the sketch in Monaco, wire boards and **470+ catalogue parts** (sensors, displays,
   motors, I²C / SPI / UART chips, logic gates, passives …) on a canvas, compile with `arduino-cli` and run the
   **real firmware**. 37 ready examples.
@@ -224,7 +216,7 @@ apps/desktop/                 the Tauri 2 app
   public/kicad/               KiCad symbols, converted (CC-BY-SA 4.0 — see THIRD_PARTY_NOTICES.md)
 engine/                       sb-engine — an experimental simulator in Rust (MNA, Newton, transient, AC)
 scripts/                      build-kicad-symbols.mjs
-docs/                         user guide, Kirk language reference, screenshots
+docs/                         user guide, Kirk language reference, demo GIFs (docs/media)
 ```
 
 Documentation: [User guide](docs/user-guide.md) · [Kirk language reference](docs/kirk-language-spec.md)

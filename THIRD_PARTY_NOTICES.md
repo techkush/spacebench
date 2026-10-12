@@ -5,6 +5,9 @@ third-party work listed here, each under its own licence. Thank you to everyone 
 
 If you redistribute Space Bench (source or binaries), keep this file and the licence files it points to.
 
+> The KiCad symbol libraries in `apps/desktop/public/kicad/` are **not** covered by the MIT licence; they
+> stay under CC-BY-SA 4.0 with the KiCad library exception (section 1 below).
+
 ---
 
 ## 1. Material bundled in this repository / in the app

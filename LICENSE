@@ -19,16 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
--------------------------------------------------------------------------------
-
-This licence covers Space Bench's own source code. Some files in this
-repository are third-party material under their own licences and are NOT
-covered by the MIT licence above — most notably:
-
-  apps/desktop/public/kicad/   KiCad symbol libraries (converted),
-                               CC-BY-SA 4.0 with the KiCad library exception
-                               — see apps/desktop/public/kicad/LICENSE.md
-
-See THIRD_PARTY_NOTICES.md for every third-party component, its licence and
-its copyright holders.
